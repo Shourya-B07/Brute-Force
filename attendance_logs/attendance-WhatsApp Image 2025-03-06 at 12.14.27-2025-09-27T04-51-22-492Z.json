@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Black Widow",
+    "status": "present"
+  },
+  {
+    "name": "Captain America",
+    "status": "present"
+  },
+  {
+    "name": "Captain Marvel",
+    "status": "present"
+  },
+  {
+    "name": "Hawkeye",
+    "status": "present"
+  },
+  {
+    "name": "Jim Rhodes",
+    "status": "present"
+  },
+  {
+    "name": "Me",
+    "status": "absent"
+  },
+  {
+    "name": "Thor",
+    "status": "present"
+  },
+  {
+    "name": "Tony Stark",
+    "status": "present"
+  }
+]
