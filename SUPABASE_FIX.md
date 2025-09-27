@@ -10,9 +10,10 @@ You're getting a 400 Bad Request error from Supabase during signup. This is usua
 Go to your Supabase Dashboard → Authentication → Settings:
 
 #### **Email Settings:**
-- ✅ **Enable email confirmations**: Set to **OFF** for development
+- ✅ **Enable email confirmations**: Set to **OFF** for immediate signup
 - ✅ **Enable email change confirmations**: Set to **OFF** for development
 - ✅ **Enable phone confirmations**: Set to **OFF** for development
+- ✅ **Enable email provider**: Set to **ON** (required for signup)
 
 #### **URL Configuration:**
 - **Site URL**: `http://localhost:3000`

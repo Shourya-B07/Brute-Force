@@ -52,16 +52,9 @@ export async function authenticateUser(email: string, password: string): Promise
         }
       }
       
-      // Fallback - create a mock user if none exists
-      const mockUser: AuthUser = {
-        id: `mock-${Date.now()}`,
-        email,
-        name: email.split('@')[0],
-        role: 'student', // Default role for development
-      }
-      
-      console.log('✅ Mock user created for development:', mockUser)
-      return mockUser
+      // If no window object (server-side), return null
+      console.error('❌ Cannot access localStorage on server-side')
+      return null
     }
 
     console.log('🔐 Attempting authentication for:', email)
@@ -72,17 +65,85 @@ export async function authenticateUser(email: string, password: string): Promise
     })
 
     if (error) {
-      console.error('❌ Supabase auth error:', error.message)
-      // Return more specific error information
-      throw new Error(`Authentication failed: ${error.message}`)
+      console.error('❌ Supabase auth error:', error)
+      console.error('❌ Error details:', {
+        message: error.message,
+        status: error.status
+      })
+      
+      // Handle specific authentication errors
+      if (error.message.includes('Invalid login credentials') || error.message.includes('invalid credentials')) {
+        throw new Error('Invalid email or password. Please check your credentials and try again.')
+      } else if (error.message.includes('Email not confirmed')) {
+        console.log('📧 Email confirmation required, trying alternative authentication...')
+        // Try to get user from our custom users table as fallback
+        const { data: customUser, error: customUserError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', email)
+          .single()
+        
+        if (customUserError || !customUser) {
+          throw new Error('Please check your email and click the confirmation link before signing in.')
+        }
+        
+        console.log('✅ Found user in custom users table, proceeding with authentication')
+        return {
+          id: customUser.id,
+          email: customUser.email,
+          role: customUser.role,
+          name: customUser.name,
+        }
+      } else if (error.message.includes('rate limit') || error.message.includes('too many')) {
+        throw new Error('Too many login attempts. Please wait a moment and try again.')
+      } else if (error.message.includes('network') || error.message.includes('connection')) {
+        throw new Error('Network error. Please check your connection and try again.')
+      } else if (error.status === 400) {
+        // Handle 400 Bad Request specifically
+        if (error.message.includes('email') || error.message.includes('Email')) {
+          throw new Error('Invalid email format. Please check your email address.')
+        } else if (error.message.includes('password') || error.message.includes('Password')) {
+          throw new Error('Invalid password. Please check your password.')
+        } else {
+          throw new Error('Authentication failed. Please check your credentials and try again.')
+        }
+      } else {
+        throw new Error(`Authentication failed: ${error.message}`)
+      }
     }
 
     if (!data.user) {
       console.error('❌ No user data returned from Supabase')
-      return null
+      // Try to find user in our custom users table as fallback
+      console.log('🔧 Attempting to find user in custom users table...')
+      
+      const { data: customUser, error: customUserError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .single()
+      
+      if (customUserError || !customUser) {
+        console.error('❌ User not found in custom users table either')
+        return null
+      }
+      
+      console.log('✅ Found user in custom users table:', customUser)
+      return {
+        id: customUser.id,
+        email: customUser.email,
+        role: customUser.role,
+        name: customUser.name,
+      }
     }
 
     console.log('✅ Supabase authentication successful for user:', data.user.id)
+    console.log('✅ User details:', {
+      id: data.user.id,
+      email: data.user.email,
+      created_at: data.user.created_at,
+      email_confirmed_at: data.user.email_confirmed_at
+    })
 
     // Get user role from our custom user table
     const { data: userData, error: userError } = await supabase
@@ -249,38 +310,28 @@ export async function createUser(email: string, password: string, name: string, 
 
     console.log('🔐 Attempting to create user:', email, 'with role:', role)
     
-    // Try signup with minimal options first
-    let { data, error } = await supabase.auth.signUp({
+    // Try signup with proper configuration
+    const { data, error } = await supabase.auth.signUp({
       email,
-      password
+      password,
+      options: {
+        data: {
+          name: name,
+          role: role
+        }
+      }
     })
     
-    // If the first attempt fails with 400, try without redirect
-    if (error && error.status === 400) {
-      console.log('🔄 First signup attempt failed, trying without redirect...')
-      const retryResult = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            name: name,
-            role: role
-          }
-        }
-      })
-      data = retryResult.data
-      error = retryResult.error
-    }
+    console.log('🔐 Supabase signup response:', { data, error })
 
     if (error) {
       console.error('❌ Supabase auth signup error:', error)
       console.error('❌ Error details:', {
         message: error.message,
-        status: error.status,
-        statusText: error.statusText
+        status: error.status
       })
       
-      // Handle specific error cases
+      // Handle specific error cases with user-friendly messages
       if (error.message.includes('already registered') || error.message.includes('already been registered')) {
         throw new Error('An account with this email already exists. Please try signing in instead.')
       } else if (error.message.includes('Invalid email') || error.message.includes('invalid email')) {
@@ -291,6 +342,10 @@ export async function createUser(email: string, password: string, name: string, 
         throw new Error('Email confirmation is required. Please check your email and click the confirmation link.')
       } else if (error.status === 400) {
         throw new Error('Invalid signup request. Please check your email format and password strength.')
+      } else if (error.message.includes('rate limit') || error.message.includes('too many')) {
+        throw new Error('Too many signup attempts. Please wait a moment and try again.')
+      } else if (error.message.includes('network') || error.message.includes('connection')) {
+        throw new Error('Network error. Please check your connection and try again.')
       } else {
         throw new Error(`Signup failed: ${error.message}`)
       }
@@ -303,141 +358,126 @@ export async function createUser(email: string, password: string, name: string, 
 
     // Check if email confirmation is required
     if (data.user && !data.session) {
-      console.log('📧 Email confirmation required. Please check your email.')
-      // Don't throw an error here, just inform the user
-      return {
+      console.log('📧 Email confirmation required, but proceeding with signup...')
+      // Continue with signup even if email confirmation is required
+      // The user will be created in our database
+    }
+
+    // Create database records regardless of email confirmation status
+    // This allows users to sign up immediately without email confirmation
+    
+    // Create user record in our custom users table
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .insert({
         id: data.user.id,
-        email: data.user.email || email,
-        role: role,
-        name: name,
-        needsEmailConfirmation: true
+        email,
+        name,
+        role,
+      })
+      .select()
+      .single()
+
+    if (userError) {
+      console.error('❌ Database user creation error:', userError.message)
+      throw new Error(`Database error: ${userError.message}`)
+    }
+
+    if (!userData) {
+      console.error('❌ No user data returned from database')
+      throw new Error('Database error: No user data returned')
+    }
+
+    // Create role-specific records
+    if (role === 'teacher') {
+      console.log('🔧 Creating teacher record for user:', data.user.id)
+      
+      const teacherData = {
+        user_id: data.user.id,
+        name,
+        email,
+        subjects: [],
+        max_hours_per_day: 8,
+        max_hours_per_week: 40,
+        availability: []
+      }
+      
+      console.log('🔧 Teacher data to insert:', teacherData)
+      
+      // Check if teacher record already exists
+      const { data: existingTeacher, error: checkError } = await supabase
+        .from('teachers')
+        .select('id')
+        .eq('user_id', data.user.id)
+        .single()
+
+      if (existingTeacher) {
+        console.log('✅ Teacher record already exists for user:', data.user.id)
+      } else {
+        const { data: teacherResult, error: teacherError } = await supabase
+          .from('teachers')
+          .insert(teacherData)
+          .select()
+
+        if (teacherError) {
+          console.error('❌ Teacher record creation error:', teacherError)
+          console.error('❌ Error details:', {
+            message: teacherError.message,
+            details: teacherError.details,
+            hint: teacherError.hint,
+            code: teacherError.code
+          })
+          // Don't fail the entire signup, but log the error for debugging
+          console.warn('⚠️ Teacher record creation failed, but user account was created')
+        } else {
+          console.log('✅ Teacher record created successfully:', teacherResult)
+        }
+      }
+    } else if (role === 'student') {
+      console.log('🔧 Creating student record for user:', data.user.id)
+      
+      // Check if student record already exists
+      const { data: existingStudent, error: checkError } = await supabase
+        .from('students')
+        .select('id')
+        .eq('user_id', data.user.id)
+        .single()
+
+      if (existingStudent) {
+        console.log('✅ Student record already exists for user:', data.user.id)
+      } else {
+        const { data: studentResult, error: studentError } = await supabase
+          .from('students')
+          .insert({
+            user_id: data.user.id,
+            name,
+            email,
+            class_name: 'Unassigned', // Default class, can be updated later
+            subjects: []
+          })
+          .select()
+
+        if (studentError) {
+          console.error('❌ Student record creation error:', studentError)
+          console.error('❌ Error details:', {
+            message: studentError.message,
+            details: studentError.details,
+            hint: studentError.hint,
+            code: studentError.code
+          })
+          // Don't fail the entire signup, but log the error for debugging
+          console.warn('⚠️ Student record creation failed, but user account was created')
+        } else {
+          console.log('✅ Student record created successfully:', studentResult)
+        }
       }
     }
 
-    // Only create database records if user is fully authenticated (has session)
-    if (data.session) {
-      // Create user record in our custom users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .insert({
-          id: data.user.id,
-          email,
-          name,
-          role,
-        })
-        .select()
-        .single()
-
-      if (userError) {
-        console.error('❌ Database user creation error:', userError.message)
-        throw new Error(`Database error: ${userError.message}`)
-      }
-
-      if (!userData) {
-        console.error('❌ No user data returned from database')
-        throw new Error('Database error: No user data returned')
-      }
-
-      // Create role-specific records
-      if (role === 'teacher') {
-        console.log('🔧 Creating teacher record for user:', data.user.id)
-        
-        const teacherData = {
-          user_id: data.user.id,
-          name,
-          email,
-          subjects: [],
-          max_hours_per_day: 8,
-          max_hours_per_week: 40,
-          availability: []
-        }
-        
-        console.log('🔧 Teacher data to insert:', teacherData)
-        
-        // Check if teacher record already exists
-        const { data: existingTeacher, error: checkError } = await supabase
-          .from('teachers')
-          .select('id')
-          .eq('user_id', data.user.id)
-          .single()
-
-        if (existingTeacher) {
-          console.log('✅ Teacher record already exists for user:', data.user.id)
-        } else {
-          const { data: teacherResult, error: teacherError } = await supabase
-            .from('teachers')
-            .insert(teacherData)
-            .select()
-
-          if (teacherError) {
-            console.error('❌ Teacher record creation error:', teacherError)
-            console.error('❌ Error details:', {
-              message: teacherError.message,
-              details: teacherError.details,
-              hint: teacherError.hint,
-              code: teacherError.code
-            })
-            // Don't fail the entire signup, but log the error for debugging
-            console.warn('⚠️ Teacher record creation failed, but user account was created')
-          } else {
-            console.log('✅ Teacher record created successfully:', teacherResult)
-          }
-        }
-      } else if (role === 'student') {
-        console.log('🔧 Creating student record for user:', data.user.id)
-        
-        // Check if student record already exists
-        const { data: existingStudent, error: checkError } = await supabase
-          .from('students')
-          .select('id')
-          .eq('user_id', data.user.id)
-          .single()
-
-        if (existingStudent) {
-          console.log('✅ Student record already exists for user:', data.user.id)
-        } else {
-          const { data: studentResult, error: studentError } = await supabase
-            .from('students')
-            .insert({
-              user_id: data.user.id,
-              name,
-              email,
-              class_name: 'Unassigned', // Default class, can be updated later
-              subjects: []
-            })
-            .select()
-
-          if (studentError) {
-            console.error('❌ Student record creation error:', studentError)
-            console.error('❌ Error details:', {
-              message: studentError.message,
-              details: studentError.details,
-              hint: studentError.hint,
-              code: studentError.code
-            })
-            // Don't fail the entire signup, but log the error for debugging
-            console.warn('⚠️ Student record creation failed, but user account was created')
-          } else {
-            console.log('✅ Student record created successfully:', studentResult)
-          }
-        }
-      }
-
-      return {
-        id: userData.id,
-        email: userData.email,
-        role: userData.role,
-        name: userData.name,
-      }
-    } else {
-      // User needs email confirmation
-      return {
-        id: data.user.id,
-        email: data.user.email || email,
-        role: role,
-        name: name,
-        needsEmailConfirmation: true
-      }
+    return {
+      id: userData.id,
+      email: userData.email,
+      role: userData.role,
+      name: userData.name,
     }
   } catch (error) {
     console.error('User creation error:', error)

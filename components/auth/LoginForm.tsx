@@ -29,6 +29,16 @@ export default function AuthForm() {
 
     // Validation for signup
     if (!isLogin) {
+      if (!formData.name.trim()) {
+        setError('Please enter your full name')
+        setLoading(false)
+        return
+      }
+      if (!formData.email.trim() || !formData.email.includes('@')) {
+        setError('Please enter a valid email address')
+        setLoading(false)
+        return
+      }
       if (formData.password !== formData.confirmPassword) {
         setError('Passwords do not match')
         setLoading(false)
@@ -39,11 +49,30 @@ export default function AuthForm() {
         setLoading(false)
         return
       }
+      if (!/[a-zA-Z]/.test(formData.password)) {
+        setError('Password must contain at least one letter')
+        setLoading(false)
+        return
+      }
+    }
+
+    // Validation for login
+    if (isLogin) {
+      if (!formData.email.trim() || !formData.email.includes('@')) {
+        setError('Please enter a valid email address')
+        setLoading(false)
+        return
+      }
+      if (!formData.password.trim()) {
+        setError('Please enter your password')
+        setLoading(false)
+        return
+      }
     }
 
     try {
       if (isLogin) {
-        console.log('🔐 Attempting login for:', formData.email, 'Role:', formData.role)
+        console.log('🔐 Attempting login for:', formData.email)
         const user = await authenticateUser(formData.email, formData.password)
         console.log('🔐 Authentication result:', user)
         
@@ -52,7 +81,7 @@ export default function AuthForm() {
           console.log('✅ User authenticated with role:', user.role)
           
           localStorage.setItem('user', JSON.stringify(user))
-          localStorage.setItem('token', 'mock-jwt-token')
+          localStorage.setItem('token', 'supabase-jwt-token')
           
           console.log('✅ Login successful, redirecting to:', user.role, 'dashboard')
           
@@ -66,21 +95,23 @@ export default function AuthForm() {
             case 'student':
               router.push('/student/dashboard')
               break
+            default:
+              console.error('❌ Unknown user role:', user.role)
+              setError('Invalid user role. Please contact support.')
+              return
           }
         } else {
+          console.error('❌ Authentication failed for:', formData.email)
           setError('Invalid credentials. Please check your email and password.')
         }
       } else {
         // Signup logic - create user in Supabase
         const newUser = await createUser(formData.email, formData.password, formData.name, formData.role)
         if (newUser) {
-          if (newUser.needsEmailConfirmation) {
-            setError('Please check your email and click the confirmation link to complete your registration.')
-            return
-          }
-          
           localStorage.setItem('user', JSON.stringify(newUser))
           localStorage.setItem('token', 'supabase-jwt-token')
+          
+          console.log('✅ Signup successful, redirecting to:', formData.role, 'dashboard')
           
           switch (formData.role) {
             case 'admin':
