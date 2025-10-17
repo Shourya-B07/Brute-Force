@@ -219,7 +219,7 @@ For support and questions:
 - Teacher dashboard with analytics
 - PDF syllabus parsing
 - Role-based authentication
-- Export functionality
+- Export functionality 
 
 ---
 
